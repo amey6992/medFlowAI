@@ -45,6 +45,8 @@ class Clinical(BaseModel):
     diagnosis: Any
     symptoms: List[Any]
     procedures: List[Any]
+    suggested_icd: Optional[List[str]] = []
+    suggested_cpt: Optional[List[str]] = []
 
 class SanityCheck(BaseModel):
     is_possible: Any
@@ -139,7 +141,9 @@ def fallback_extraction(note, raw_ai_output=""):
         "clinical": {
             "diagnosis": diag,
             "symptoms": ["Extracted via fallback"],
-            "procedures": []
+            "procedures": [],
+            "suggested_icd": [],
+            "suggested_cpt": []
         },
         "sanity_check": {
             "is_possible": True,
@@ -176,30 +180,33 @@ def map_to_codes(extraction: ExtractionResult):
     assigned_cpt = []
     audit = []
     
-    # Flatten fields to strings for processing
+    # 1. Start with AI Suggestions (The "Scalable" part)
+    if extraction.clinical.suggested_icd:
+        assigned_icd.extend([flatten(i) for i in extraction.clinical.suggested_icd])
+        audit.append(f"AI suggested ICD-10: {', '.join(assigned_icd)}")
+        
+    if extraction.clinical.suggested_cpt:
+        assigned_cpt.extend([flatten(c) for c in extraction.clinical.suggested_cpt])
+        audit.append(f"AI suggested CPT: {', '.join(assigned_cpt)}")
+
+    # 2. Apply Deterministic "Golden Rules" (Overrides AI if matched)
     diag = flatten(extraction.clinical.diagnosis).lower()
-    symptoms = [flatten(s).lower() for s in extraction.clinical.symptoms]
-    procs = [flatten(p).lower() for p in extraction.clinical.procedures]
     history = [flatten(h).lower() for h in extraction.patient.history]
+    symptoms = [flatten(s).lower() for s in extraction.clinical.symptoms]
     
     risk_level = "Low"
     if "diabetes" in diag or any("diabetes" in h for h in history):
         risk_level = "Medium"
         if "ulcer" in diag or any("ulcer" in s for s in symptoms):
-            assigned_icd.append("E11.621")
-            audit.append("Mapped 'Diabetes + Ulcer' to E11.621 via strict lookup.")
+            # Override with specific high-risk code
+            if "E11.621" not in assigned_icd:
+                assigned_icd.append("E11.621")
+                audit.append("Rule Match: Overrode with E11.621 (Diabetes + Ulcer).")
             risk_level = "High"
-        else:
+        elif "E11.9" not in assigned_icd:
             assigned_icd.append("E11.9")
-            audit.append("Mapped 'Diabetes' to E11.9.")
+            audit.append("Rule Match: Added E11.9 (Diabetes).")
             
-    if any("debridement" in p for p in procs):
-        assigned_cpt.append("11042")
-        audit.append("Mapped 'Debridement' to CPT 11042.")
-    else:
-        assigned_cpt.append("99213")
-        audit.append("Defaulted to E/M 99213.")
-        
     return assigned_icd, assigned_cpt, audit, risk_level
 
 @app.post("/analyze")
@@ -235,7 +242,9 @@ async def analyze_note(input: NoteInput):
     
     TASK:
     1. Extract the clinical data.
-    2. Perform a "Clinical Alignment Audit". 
+    2. Map the diagnosis to the most specific ICD-10-CM code(s).
+    3. Map the procedures to the most appropriate CPT code(s).
+    4. Perform a "Clinical Alignment Audit". 
        - Is the procedure (e.g. Angioplasty) medically indicated for the diagnosis (e.g. Headache)?
        - Is the age/gender appropriate for the condition?
        - Are the symptoms consistent with the diagnosis?
@@ -252,7 +261,9 @@ async def analyze_note(input: NoteInput):
       "clinical": {{
         "diagnosis": "string",
         "symptoms": ["string"],
-        "procedures": ["string"]
+        "procedures": ["string"],
+        "suggested_icd": ["ICD-10 codes"],
+        "suggested_cpt": ["CPT codes"]
       }},
       "sanity_check": {{
         "reasoning": "Step-by-step medical reasoning about the alignment of diagnosis, symptoms, and procedures.",
@@ -309,27 +320,31 @@ async def analyze_note(input: NoteInput):
         # 2. Deterministic Mapping & Decision
         icd, cpt, audit, risk_level = map_to_codes(extraction)
         
-        # 3. Decision Logic
-        status = "APPROVE"
-        reason = "Rules satisfied."
+        # 3. Scalable Decision Logic
+        # Priority 1: Missing Data
+        is_missing_data = not extraction.clinical.diagnosis or flatten(extraction.clinical.diagnosis).lower() in ["unknown", "insufficient data", "none"]
         
-        # Priority 1: AI Sanity Check
-        # Ensure is_possible is treated as boolean even if AI returns string "true"/"false"
+        # Priority 2: Rule Violation (AI Sanity Check)
         is_possible = extraction.sanity_check.is_possible
         if isinstance(is_possible, str):
             is_possible = is_possible.lower() == "true"
             
-        if not is_possible:
+        # Decision Tree
+        if is_missing_data:
             status = "REJECT"
-            reason = f"AI Sanity Check Failed: {flatten(extraction.sanity_check.reason)}"
-        # Priority 2: Confidence
+            reason = "Missing critical clinical data for extraction."
+        elif not is_possible:
+            status = "REJECT"
+            reason = f"Clinical Rule Violation: {flatten(extraction.sanity_check.reason)}"
         elif extraction.confidence < 0.7:
             status = "ESCALATE"
-            reason = "Low AI confidence."
-        # Priority 3: Clinical Risk
+            reason = "Low AI confidence score."
         elif risk_level == "High":
             status = "ESCALATE"
-            reason = "High clinical risk detected."
+            reason = "High clinical risk detected (requires human audit)."
+        else:
+            status = "APPROVE"
+            reason = "Automated clinical rules satisfied."
         
         return {
             "extraction": extraction,
