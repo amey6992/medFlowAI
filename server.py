@@ -46,9 +46,14 @@ class Clinical(BaseModel):
     symptoms: List[Any]
     procedures: List[Any]
 
+class SanityCheck(BaseModel):
+    is_possible: bool
+    reason: str
+
 class ExtractionResult(BaseModel):
     patient: Patient
     clinical: Clinical
+    sanity_check: SanityCheck
     confidence: float
 
 class NoteInput(BaseModel):
@@ -139,6 +144,27 @@ def fallback_extraction(note, raw_ai_output=""):
     }
 
 # --- Logic ---
+def validate_clinical_consistency(extraction: ExtractionResult):
+    """Checks for impossible clinical scenarios (e.g., Male + Pregnancy)."""
+    diag = flatten(extraction.clinical.diagnosis).lower()
+    gender = extraction.patient.gender.lower()
+    
+    # Gender-specific keywords
+    FEMALE_ONLY = ["pregnancy", "pregnant", "obstetric", "ovarian", "uterine", "cervical", "menstrual", "ectopic"]
+    MALE_ONLY = ["prostate", "testicular", "scrotal", "penile", "prostatic"]
+    
+    if gender == "male" or gender == "m":
+        for word in FEMALE_ONLY:
+            if word in diag:
+                return False, f"Clinical inconsistency: Male patient with {word}-related diagnosis."
+    
+    if gender == "female" or gender == "f":
+        for word in MALE_ONLY:
+            if word in diag:
+                return False, f"Clinical inconsistency: Female patient with {word}-related diagnosis."
+                
+    return True, ""
+
 def map_to_codes(extraction: ExtractionResult):
     assigned_icd = []
     assigned_cpt = []
@@ -181,6 +207,7 @@ async def analyze_note(input: NoteInput):
             "extraction": {
                 "patient": {"age": 0, "gender": "unknown", "history": []},
                 "clinical": {"diagnosis": "Insufficient data", "symptoms": [], "procedures": []},
+                "sanity_check": {"is_possible": False, "reason": "Note too short."},
                 "confidence": 0.0
             },
             "decision": {
@@ -197,15 +224,16 @@ async def analyze_note(input: NoteInput):
     
     # 1. Extraction using Ollama (Llama3.1)
     prompt = f"""
-    You are a precise medical data extractor. 
-    Extract clinical data from the note below into a STRICT JSON object.
+    You are a Senior Medical Auditor and Data Extractor.
     
-    RULES:
-    1. Return ONLY the JSON object. No preamble, no explanation.
-    2. Use DOUBLE QUOTES for all keys and string values.
-    3. Ensure the JSON is perfectly valid.
-    4. Keep values as simple strings or lists of strings.
-    
+    TASK 1: Extract clinical data from the note.
+    TASK 2: Perform a "Clinical Sanity Check". Evaluate if the scenario is medically possible. 
+    Check for:
+    - Gender/Diagnosis mismatches (e.g. male pregnancy).
+    - Age/Diagnosis mismatches (e.g. infant with geriatric disease).
+    - Anatomical impossibilities.
+    - Highly improbable clinical combinations.
+
     JSON STRUCTURE:
     {{
       "patient": {{
@@ -218,11 +246,17 @@ async def analyze_note(input: NoteInput):
         "symptoms": ["string"],
         "procedures": ["string"]
       }},
+      "sanity_check": {{
+        "is_possible": boolean,
+        "reason": "Explain any medical inconsistencies found, or 'Scenario is medically sound' if OK."
+      }},
       "confidence": number (0.0 to 1.0)
     }}
 
     CLINICAL NOTE:
     "{cleaned_note}"
+    
+    Return ONLY valid JSON.
     """
     
     try:
@@ -250,6 +284,9 @@ async def analyze_note(input: NoteInput):
                 print(f"Repair failed: {str(je)}")
                 # Final fallback: Regex extraction
                 data = fallback_extraction(cleaned_note, raw_content)
+                # Add missing sanity check field for fallback
+                if "sanity_check" not in data:
+                    data["sanity_check"] = {"is_possible": True, "reason": "Fallback used."}
                 print("Used fallback regex extraction.")
 
         extraction = ExtractionResult(**data)
@@ -261,9 +298,15 @@ async def analyze_note(input: NoteInput):
         status = "APPROVE"
         reason = "Rules satisfied."
         
-        if extraction.confidence < 0.7:
+        # Priority 1: AI Sanity Check
+        if not extraction.sanity_check.is_possible:
+            status = "REJECT"
+            reason = f"AI Sanity Check Failed: {extraction.sanity_check.reason}"
+        # Priority 2: Confidence
+        elif extraction.confidence < 0.7:
             status = "ESCALATE"
             reason = "Low AI confidence."
+        # Priority 3: Clinical Risk
         elif risk_level == "High":
             status = "ESCALATE"
             reason = "High clinical risk detected."
