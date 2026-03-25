@@ -1,6 +1,6 @@
-# MedFlow AI: Local Setup Guide
+# MedFlow AI: Local Setup Guide (Ollama + Llama 3.1)
 
-This guide explains how to run the **Python + Ollama** version of MedFlow AI on your local machine.
+This guide explains how to run the **Python + Ollama** version of MedFlow AI on your local machine. This setup uses open-source models and does not require a Gemini API key.
 
 ## 1. Install Ollama
 Download and install Ollama from [ollama.com](https://ollama.com).
@@ -8,7 +8,7 @@ Download and install Ollama from [ollama.com](https://ollama.com).
 ## 2. Pull the Model
 Open your terminal and run:
 ```bash
-ollama pull llama3
+ollama pull llama3.1
 ```
 *(You can also use `mistral` or `phi3` if you update `server.py` accordingly)*
 
@@ -29,13 +29,11 @@ ollama pull llama3
    ```bash
    npm install
    ```
-2. Start the development server:
+2. In `src/services/medflowService.ts`, set `USE_LOCAL_BACKEND = true`.
+3. Start the development server:
    ```bash
    npm run dev
    ```
 
-## 5. Connecting Frontend to Python
-In `src/services/medflowService.ts`, you can update the `processClinicalNote` function to fetch from `http://localhost:8000/analyze` instead of calling the Gemini SDK directly.
-
----
-**Note:** The cloud version uses Gemini because Ollama requires local hardware acceleration.
+## 5. How it works
+The frontend will now send clinical notes to your local Python server (`localhost:8000`), which uses Ollama to process the text using the `llama3.1` model. The deterministic rule engine still runs to ensure coding accuracy.

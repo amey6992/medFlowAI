@@ -3,6 +3,10 @@ import { ICD10_DATABASE, CPT_DATABASE, COMPATIBILITY_RULES, PAYER_POLICIES } fro
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY || "" });
 
+// SET TO TRUE FOR LOCAL DEVELOPMENT WITH OLLAMA
+const USE_LOCAL_BACKEND = false; 
+const LOCAL_BACKEND_URL = "http://localhost:8000/analyze";
+
 export interface ExtractionResult {
   patient: {
     age: number;
@@ -35,6 +39,10 @@ export interface ClaimDecision {
 }
 
 export async function processClinicalNote(note: string, payer: string = "Medicare"): Promise<{ extraction: ExtractionResult, decision: ClaimDecision, steps: ProcessingStep[] }> {
+  if (USE_LOCAL_BACKEND) {
+    return processWithLocalBackend(note, payer);
+  }
+
   const steps: ProcessingStep[] = [];
   
   // 1. Clinical Extraction
@@ -68,6 +76,31 @@ export async function processClinicalNote(note: string, payer: string = "Medicar
   steps[4].output = decision;
 
   return { extraction, decision, steps };
+}
+
+async function processWithLocalBackend(note: string, payer: string): Promise<any> {
+  const response = await fetch(LOCAL_BACKEND_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note })
+  });
+  
+  if (!response.ok) {
+    throw new Error("Local backend error. Ensure server.py is running.");
+  }
+  
+  const data = await response.json();
+  
+  // Reconstruct steps for UI consistency
+  const steps: ProcessingStep[] = [
+    { id: 'extract', name: 'Clinical Extraction (Ollama)', status: 'completed', output: data.extraction },
+    { id: 'risk', name: 'Risk Detection', status: 'completed', output: { level: data.decision.riskLevel } },
+    { id: 'coding', name: 'Medical Coding', status: 'completed', output: { assignedIcd: data.decision.assignedIcd, assignedCpt: data.decision.assignedCpt } },
+    { id: 'validate', name: 'Rule Validation', status: 'completed', output: { errors: [], warnings: [] } },
+    { id: 'decision', name: 'Decision Engine', status: 'completed', output: data.decision }
+  ];
+
+  return { extraction: data.extraction, decision: data.decision, steps };
 }
 
 async function extractClinicalData(note: string): Promise<ExtractionResult> {

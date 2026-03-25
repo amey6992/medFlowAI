@@ -80,7 +80,7 @@ async def analyze_note(input: NoteInput):
     """
     
     try:
-        response = ollama.chat(model='llama3', messages=[
+        response = ollama.chat(model='llama3.1', messages=[
             {'role': 'user', 'content': prompt},
         ])
         
