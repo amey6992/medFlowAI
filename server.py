@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Any
 import ollama
 import json
 
@@ -28,12 +28,12 @@ COMPATIBILITY_RULES = {
 class Patient(BaseModel):
     age: int
     gender: str
-    history: List[str]
+    history: List[Any]
 
 class Clinical(BaseModel):
-    diagnosis: str
-    symptoms: List[str]
-    procedures: List[str]
+    diagnosis: Any
+    symptoms: List[Any]
+    procedures: List[Any]
 
 class ExtractionResult(BaseModel):
     patient: Patient
@@ -43,17 +43,30 @@ class ExtractionResult(BaseModel):
 class NoteInput(BaseModel):
     note: str
 
+# --- Helper to flatten LLM outputs ---
+def flatten(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        return ", ".join([flatten(v) for v in value])
+    if isinstance(value, dict):
+        return " ".join([f"{k}: {flatten(v)}" for k, v in value.items()])
+    return str(value)
+
 # --- Logic ---
 def map_to_codes(extraction: ExtractionResult):
     assigned_icd = []
     assigned_cpt = []
     audit = []
     
-    diag = extraction.clinical.diagnosis.lower()
-    procs = [p.lower() for p in extraction.clinical.procedures]
+    # Flatten fields to strings for processing
+    diag = flatten(extraction.clinical.diagnosis).lower()
+    symptoms = [flatten(s).lower() for s in extraction.clinical.symptoms]
+    procs = [flatten(p).lower() for p in extraction.clinical.procedures]
+    history = [flatten(h).lower() for h in extraction.patient.history]
     
-    if "diabetes" in diag:
-        if "ulcer" in diag or any("ulcer" in s.lower() for s in extraction.clinical.symptoms):
+    if "diabetes" in diag or any("diabetes" in h for h in history):
+        if "ulcer" in diag or any("ulcer" in s for s in symptoms):
             assigned_icd.append("E11.621")
             audit.append("Mapped 'Diabetes + Ulcer' to E11.621 via strict lookup.")
         else:
@@ -71,10 +84,26 @@ def map_to_codes(extraction: ExtractionResult):
 
 @app.post("/analyze")
 async def analyze_note(input: NoteInput):
-    # 1. Extraction using Ollama (Llama3 or Mistral)
+    # 1. Extraction using Ollama (Llama3.1)
     prompt = f"""
     Extract clinical data from this note into JSON.
-    Fields: patient (age, gender, history[]), clinical (diagnosis, symptoms[], procedures[]), confidence (0-1).
+    IMPORTANT: Keep values as simple strings or lists of strings. Do not use nested objects for symptoms or history.
+    
+    Expected JSON Structure:
+    {{
+      "patient": {{
+        "age": number,
+        "gender": "string",
+        "history": ["string", "string"]
+      }},
+      "clinical": {{
+        "diagnosis": "string",
+        "symptoms": ["string", "string"],
+        "procedures": ["string", "string"]
+      }},
+      "confidence": number (0-1)
+    }}
+
     Note: "{input.note}"
     Return ONLY valid JSON.
     """
@@ -99,16 +128,26 @@ async def analyze_note(input: NoteInput):
         # 3. Decision Logic
         status = "APPROVE"
         reason = "Rules satisfied."
+        risk_level = "Low"
         
+        if "diabetes" in diag or any("diabetes" in h for h in history):
+            risk_level = "Medium"
+            if "ulcer" in diag or any("ulcer" in s for s in symptoms):
+                risk_level = "High"
+
         if extraction.confidence < 0.7:
             status = "ESCALATE"
             reason = "Low AI confidence."
+        elif risk_level == "High":
+            status = "ESCALATE"
+            reason = "High clinical risk detected."
         
         return {
             "extraction": extraction,
             "decision": {
                 "status": status,
                 "reason": reason,
+                "riskLevel": risk_level,
                 "assignedIcd": icd,
                 "assignedCpt": cpt,
                 "auditTrail": audit
