@@ -65,10 +65,13 @@ def map_to_codes(extraction: ExtractionResult):
     procs = [flatten(p).lower() for p in extraction.clinical.procedures]
     history = [flatten(h).lower() for h in extraction.patient.history]
     
+    risk_level = "Low"
     if "diabetes" in diag or any("diabetes" in h for h in history):
+        risk_level = "Medium"
         if "ulcer" in diag or any("ulcer" in s for s in symptoms):
             assigned_icd.append("E11.621")
             audit.append("Mapped 'Diabetes + Ulcer' to E11.621 via strict lookup.")
+            risk_level = "High"
         else:
             assigned_icd.append("E11.9")
             audit.append("Mapped 'Diabetes' to E11.9.")
@@ -80,7 +83,7 @@ def map_to_codes(extraction: ExtractionResult):
         assigned_cpt.append("99213")
         audit.append("Defaulted to E/M 99213.")
         
-    return assigned_icd, assigned_cpt, audit
+    return assigned_icd, assigned_cpt, audit, risk_level
 
 @app.post("/analyze")
 async def analyze_note(input: NoteInput):
@@ -123,18 +126,12 @@ async def analyze_note(input: NoteInput):
         extraction = ExtractionResult(**data)
         
         # 2. Deterministic Mapping & Decision
-        icd, cpt, audit = map_to_codes(extraction)
+        icd, cpt, audit, risk_level = map_to_codes(extraction)
         
         # 3. Decision Logic
         status = "APPROVE"
         reason = "Rules satisfied."
-        risk_level = "Low"
         
-        if "diabetes" in diag or any("diabetes" in h for h in history):
-            risk_level = "Medium"
-            if "ulcer" in diag or any("ulcer" in s for s in symptoms):
-                risk_level = "High"
-
         if extraction.confidence < 0.7:
             status = "ESCALATE"
             reason = "Low AI confidence."
