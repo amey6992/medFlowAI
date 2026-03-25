@@ -1,0 +1,5 @@
+{
+  "name": "MedFlow AI",
+  "description": "Autonomous Healthcare Claims & Risk Decision Agent using AI + Rule-based validation for medical coding and clinical risk assessment.",
+  "requestFramePermissions": []
+}
