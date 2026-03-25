@@ -71,13 +71,72 @@ def clean_json_string(raw_content):
     # Try to find JSON block
     json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
     if json_match:
-        content = json_match.group(0)
-        # Basic cleanup of common LLM JSON errors
-        content = content.replace('\n', ' ')
-        # Remove trailing commas before closing braces/brackets
-        content = re.sub(r',\s*([\]\}])', r'\1', content)
-        return content
+        return json_match.group(0)
     return raw_content
+
+def repair_json(content):
+    """Attempts to fix common LLM JSON formatting errors."""
+    try:
+        # 1. Basic cleanup
+        content = content.strip()
+        
+        # 2. Handle single quotes used as double quotes for keys/values
+        # This is tricky because single quotes can be inside values.
+        # We only replace single quotes that look like they are surrounding keys or values.
+        # Replace 'key': with "key":
+        content = re.sub(r"\'(\w+)\'\s*:", r'"\1":', content)
+        # Replace : 'value' with : "value"
+        content = re.sub(r":\s*\'(.*?)\'(\s*[,\}])", r': "\1"\2', content)
+        
+        # 3. Handle unquoted keys
+        content = re.sub(r"([{,]\s*)(\w+)(\s*:)", r'\1"\2"\3', content)
+        
+        # 4. Remove trailing commas
+        content = re.sub(r',\s*([\]\}])', r'\1', content)
+        
+        # 5. Remove control characters and newlines inside the JSON structure
+        # (but keep them if they are escaped)
+        content = content.replace('\n', ' ').replace('\r', ' ')
+        
+        return content
+    except Exception:
+        return content
+
+def fallback_extraction(note, raw_ai_output=""):
+    """Last resort: Use regex to extract basic info if JSON parsing fails."""
+    print("Executing fallback extraction logic...")
+    
+    # Try to find age
+    age_match = re.search(r'(\d{1,3})\s*(?:year|yo|age)', note, re.IGNORECASE)
+    age = int(age_match.group(1)) if age_match else 0
+    
+    # Try to find gender
+    gender = "unknown"
+    if re.search(r'\bmale\b|\bman\b|\bgentleman\b', note, re.IGNORECASE):
+        gender = "male"
+    elif re.search(r'\bfemale\b|\bwoman\b|\blady\b', note, re.IGNORECASE):
+        gender = "female"
+        
+    # Try to find diagnosis in the AI output if possible, otherwise from note
+    diag = "Unknown"
+    diag_match = re.search(r'diagnosis["\s:]+([^",\]\}]+)', raw_ai_output, re.IGNORECASE)
+    if diag_match:
+        diag = diag_match.group(1).strip()
+    else:
+        # Simple heuristic from note
+        if "diabetes" in note.lower(): diag = "Diabetes"
+        elif "hypertension" in note.lower(): diag = "Hypertension"
+        elif "laceration" in note.lower(): diag = "Laceration"
+        
+    return {
+        "patient": {"age": age, "gender": gender, "history": []},
+        "clinical": {
+            "diagnosis": diag,
+            "symptoms": ["Extracted via fallback"],
+            "procedures": []
+        },
+        "confidence": 0.3 # Low confidence for fallback
+    }
 
 # --- Logic ---
 def map_to_codes(extraction: ExtractionResult):
@@ -138,26 +197,32 @@ async def analyze_note(input: NoteInput):
     
     # 1. Extraction using Ollama (Llama3.1)
     prompt = f"""
-    Extract clinical data from this note into JSON.
-    IMPORTANT: Keep values as simple strings or lists of strings. Do not use nested objects for symptoms or history.
+    You are a precise medical data extractor. 
+    Extract clinical data from the note below into a STRICT JSON object.
     
-    Expected JSON Structure:
+    RULES:
+    1. Return ONLY the JSON object. No preamble, no explanation.
+    2. Use DOUBLE QUOTES for all keys and string values.
+    3. Ensure the JSON is perfectly valid.
+    4. Keep values as simple strings or lists of strings.
+    
+    JSON STRUCTURE:
     {{
       "patient": {{
         "age": number,
-        "gender": "string",
-        "history": ["string", "string"]
+        "gender": "male" | "female" | "unknown",
+        "history": ["string"]
       }},
       "clinical": {{
         "diagnosis": "string",
-        "symptoms": ["string", "string"],
-        "procedures": ["string", "string"]
+        "symptoms": ["string"],
+        "procedures": ["string"]
       }},
-      "confidence": number (0-1)
+      "confidence": number (0.0 to 1.0)
     }}
 
-    Note: "{cleaned_note}"
-    Return ONLY valid JSON.
+    CLINICAL NOTE:
+    "{cleaned_note}"
     """
     
     try:
@@ -167,18 +232,25 @@ async def analyze_note(input: NoteInput):
         ])
         
         raw_content = response['message']['content']
-        print(f"Raw Output (first 100): {raw_content[:100]}...")
+        print(f"Raw Output (first 200): {raw_content[:200]}...")
         
-        # Robust JSON extraction
+        # Robust JSON extraction and repair
         json_content = clean_json_string(raw_content)
         
+        data = None
         try:
             data = json.loads(json_content)
-        except json.JSONDecodeError as je:
-            print(f"JSON Parse Error: {str(je)}")
-            print(f"Attempted to parse: {json_content}")
-            # Fallback for minor parsing issues or retry logic could go here
-            raise HTTPException(status_code=500, detail=f"AI returned malformed JSON: {str(je)}")
+        except json.JSONDecodeError:
+            print("Initial JSON parse failed. Attempting repair...")
+            repaired_content = repair_json(json_content)
+            try:
+                data = json.loads(repaired_content)
+                print("JSON repair successful.")
+            except json.JSONDecodeError as je:
+                print(f"Repair failed: {str(je)}")
+                # Final fallback: Regex extraction
+                data = fallback_extraction(cleaned_note, raw_content)
+                print("Used fallback regex extraction.")
 
         extraction = ExtractionResult(**data)
         
