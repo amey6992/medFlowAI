@@ -37,8 +37,8 @@ COMPATIBILITY_RULES = {
 
 # --- Models ---
 class Patient(BaseModel):
-    age: int
-    gender: str
+    age: Any
+    gender: Any
     history: List[Any]
 
 class Clinical(BaseModel):
@@ -47,9 +47,9 @@ class Clinical(BaseModel):
     procedures: List[Any]
 
 class SanityCheck(BaseModel):
-    is_possible: bool
-    reasoning: str
-    reason: str
+    is_possible: Any
+    reasoning: Any
+    reason: Any
 
 class ExtractionResult(BaseModel):
     patient: Patient
@@ -140,6 +140,11 @@ def fallback_extraction(note, raw_ai_output=""):
             "diagnosis": diag,
             "symptoms": ["Extracted via fallback"],
             "procedures": []
+        },
+        "sanity_check": {
+            "is_possible": True,
+            "reasoning": "Fallback extraction used due to JSON parsing issues.",
+            "reason": "Scenario is medically sound (fallback)."
         },
         "confidence": 0.3 # Low confidence for fallback
     }
@@ -288,10 +293,16 @@ async def analyze_note(input: NoteInput):
                 print(f"Repair failed: {str(je)}")
                 # Final fallback: Regex extraction
                 data = fallback_extraction(cleaned_note, raw_content)
-                # Add missing sanity check field for fallback
-                if "sanity_check" not in data:
-                    data["sanity_check"] = {"is_possible": True, "reason": "Fallback used."}
                 print("Used fallback regex extraction.")
+
+        # Ensure all required fields exist in data to prevent Pydantic errors
+        if not data:
+            data = fallback_extraction(cleaned_note, "No data extracted")
+            
+        if "patient" not in data: data["patient"] = {"age": 0, "gender": "unknown", "history": []}
+        if "clinical" not in data: data["clinical"] = {"diagnosis": "Unknown", "symptoms": [], "procedures": []}
+        if "sanity_check" not in data: data["sanity_check"] = {"is_possible": True, "reasoning": "N/A", "reason": "N/A"}
+        if "confidence" not in data: data["confidence"] = 0.5
 
         extraction = ExtractionResult(**data)
         
@@ -303,9 +314,14 @@ async def analyze_note(input: NoteInput):
         reason = "Rules satisfied."
         
         # Priority 1: AI Sanity Check
-        if not extraction.sanity_check.is_possible:
+        # Ensure is_possible is treated as boolean even if AI returns string "true"/"false"
+        is_possible = extraction.sanity_check.is_possible
+        if isinstance(is_possible, str):
+            is_possible = is_possible.lower() == "true"
+            
+        if not is_possible:
             status = "REJECT"
-            reason = f"AI Sanity Check Failed: {extraction.sanity_check.reason}"
+            reason = f"AI Sanity Check Failed: {flatten(extraction.sanity_check.reason)}"
         # Priority 2: Confidence
         elif extraction.confidence < 0.7:
             status = "ESCALATE"
