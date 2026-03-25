@@ -4,6 +4,7 @@ from pydantic import BaseModel
 from typing import List, Optional, Any
 import ollama
 import json
+import re
 
 app = FastAPI(title="MedFlow AI Backend")
 
@@ -55,6 +56,8 @@ class NoteInput(BaseModel):
 
 # --- Helper to flatten LLM outputs ---
 def flatten(value):
+    if value is None:
+        return ""
     if isinstance(value, str):
         return value
     if isinstance(value, list):
@@ -62,6 +65,19 @@ def flatten(value):
     if isinstance(value, dict):
         return " ".join([f"{k}: {flatten(v)}" for k, v in value.items()])
     return str(value)
+
+def clean_json_string(raw_content):
+    """Extracts JSON from a string that might contain markdown or extra text."""
+    # Try to find JSON block
+    json_match = re.search(r'\{.*\}', raw_content, re.DOTALL)
+    if json_match:
+        content = json_match.group(0)
+        # Basic cleanup of common LLM JSON errors
+        content = content.replace('\n', ' ')
+        # Remove trailing commas before closing braces/brackets
+        content = re.sub(r',\s*([\]\}])', r'\1', content)
+        return content
+    return raw_content
 
 # --- Logic ---
 def map_to_codes(extraction: ExtractionResult):
@@ -97,6 +113,29 @@ def map_to_codes(extraction: ExtractionResult):
 
 @app.post("/analyze")
 async def analyze_note(input: NoteInput):
+    print(f"--- Received analysis request ---")
+    
+    # Early detection/cleanup
+    cleaned_note = input.note.strip()
+    if not cleaned_note or len(cleaned_note) < 10:
+        return {
+            "extraction": {
+                "patient": {"age": 0, "gender": "unknown", "history": []},
+                "clinical": {"diagnosis": "Insufficient data", "symptoms": [], "procedures": []},
+                "confidence": 0.0
+            },
+            "decision": {
+                "status": "ESCALATE",
+                "reason": "Note too short for reliable analysis.",
+                "riskLevel": "Low",
+                "assignedIcd": [],
+                "assignedCpt": [],
+                "auditTrail": ["Early detection: Note length insufficient."]
+            }
+        }
+
+    print(f"Note length: {len(cleaned_note)} characters")
+    
     # 1. Extraction using Ollama (Llama3.1)
     prompt = f"""
     Extract clinical data from this note into JSON.
@@ -117,22 +156,30 @@ async def analyze_note(input: NoteInput):
       "confidence": number (0-1)
     }}
 
-    Note: "{input.note}"
+    Note: "{cleaned_note}"
     Return ONLY valid JSON.
     """
     
     try:
+        print("Calling Ollama (Llama 3.1)...")
         response = ollama.chat(model='llama3.1', messages=[
             {'role': 'user', 'content': prompt},
         ])
         
-        # Parse JSON from response
         raw_content = response['message']['content']
-        # Simple cleanup in case of markdown blocks
-        if "```json" in raw_content:
-            raw_content = raw_content.split("```json")[1].split("```")[0]
+        print(f"Raw Output (first 100): {raw_content[:100]}...")
         
-        data = json.loads(raw_content)
+        # Robust JSON extraction
+        json_content = clean_json_string(raw_content)
+        
+        try:
+            data = json.loads(json_content)
+        except json.JSONDecodeError as je:
+            print(f"JSON Parse Error: {str(je)}")
+            print(f"Attempted to parse: {json_content}")
+            # Fallback for minor parsing issues or retry logic could go here
+            raise HTTPException(status_code=500, detail=f"AI returned malformed JSON: {str(je)}")
+
         extraction = ExtractionResult(**data)
         
         # 2. Deterministic Mapping & Decision
