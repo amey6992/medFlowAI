@@ -48,6 +48,7 @@ class Clinical(BaseModel):
 
 class SanityCheck(BaseModel):
     is_possible: bool
+    reasoning: str
     reason: str
 
 class ExtractionResult(BaseModel):
@@ -224,15 +225,17 @@ async def analyze_note(input: NoteInput):
     
     # 1. Extraction using Ollama (Llama3.1)
     prompt = f"""
-    You are a Senior Medical Auditor and Data Extractor.
+    You are a Senior Medical Auditor and Fraud Detection Specialist.
+    Your goal is to extract data AND identify clinical impossibilities or fraudulent claims.
     
-    TASK 1: Extract clinical data from the note.
-    TASK 2: Perform a "Clinical Sanity Check". Evaluate if the scenario is medically possible. 
-    Check for:
-    - Gender/Diagnosis mismatches (e.g. male pregnancy).
-    - Age/Diagnosis mismatches (e.g. infant with geriatric disease).
-    - Anatomical impossibilities.
-    - Highly improbable clinical combinations.
+    TASK:
+    1. Extract the clinical data.
+    2. Perform a "Clinical Alignment Audit". 
+       - Is the procedure (e.g. Angioplasty) medically indicated for the diagnosis (e.g. Headache)?
+       - Is the age/gender appropriate for the condition?
+       - Are the symptoms consistent with the diagnosis?
+    
+    BE HIGHLY SKEPTICAL. If a minor symptom leads to a major invasive procedure without clear justification, flag it as impossible.
 
     JSON STRUCTURE:
     {{
@@ -247,8 +250,9 @@ async def analyze_note(input: NoteInput):
         "procedures": ["string"]
       }},
       "sanity_check": {{
+        "reasoning": "Step-by-step medical reasoning about the alignment of diagnosis, symptoms, and procedures.",
         "is_possible": boolean,
-        "reason": "Explain any medical inconsistencies found, or 'Scenario is medically sound' if OK."
+        "reason": "Final summary of the inconsistency or 'Scenario is medically sound'."
       }},
       "confidence": number (0.0 to 1.0)
     }}
