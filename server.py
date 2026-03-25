@@ -2,6 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import List, Optional, Any
+from datetime import datetime
 import ollama
 import json
 import re
@@ -110,13 +111,51 @@ def repair_json(content):
     except Exception:
         return content
 
+def calculate_age_from_dob(dob_str):
+    """Attempts to calculate age from a date of birth string."""
+    try:
+        # Common formats
+        formats = ["%Y-%m-%d", "%d/%m/%Y", "%m/%d/%Y", "%d-%m-%Y", "%m-%d-%Y", "%b %d, %Y", "%d %b %Y"]
+        for fmt in formats:
+            try:
+                dob = datetime.strptime(dob_str, fmt)
+                today = datetime.now()
+                age = today.year - dob.year - ((today.month, today.day) < (today.month, today.day))
+                return age
+            except ValueError:
+                continue
+    except Exception:
+        pass
+    return None
+
 def fallback_extraction(note, raw_ai_output=""):
     """Last resort: Use regex to extract basic info if JSON parsing fails."""
     print("Executing fallback extraction logic...")
     
-    # Try to find age
-    age_match = re.search(r'(\d{1,3})\s*(?:year|yo|age)', note, re.IGNORECASE)
-    age = int(age_match.group(1)) if age_match else 0
+    # 1. Try to find DOB
+    dob_match = re.search(r'DOB[:\s]+([\d/-]+|[a-z]+\s\d{1,2},?\s\d{4})', note, re.IGNORECASE)
+    age = 0
+    if dob_match:
+        calculated_age = calculate_age_from_dob(dob_match.group(1).strip())
+        if calculated_age is not None:
+            age = calculated_age
+            
+    # 2. Try to find age if DOB not found or failed (handle hyphens like 50-year-old, months, days)
+    if age == 0:
+        # Years
+        age_match = re.search(r'(\d{1,3})[\s-]*(?:year|yo|age)', note, re.IGNORECASE)
+        if age_match:
+            age = int(age_match.group(1))
+        else:
+            # Months (for infants)
+            month_match = re.search(r'(\d{1,2})[\s-]*(?:month|mo)', note, re.IGNORECASE)
+            if month_match:
+                age = f"{month_match.group(1)} months"
+            else:
+                # Days
+                day_match = re.search(r'(\d{1,2})[\s-]*(?:day|d)', note, re.IGNORECASE)
+                if day_match:
+                    age = f"{day_match.group(1)} days"
     
     # Try to find gender
     gender = "unknown"
@@ -135,13 +174,14 @@ def fallback_extraction(note, raw_ai_output=""):
         if "diabetes" in note.lower(): diag = "Diabetes"
         elif "hypertension" in note.lower(): diag = "Hypertension"
         elif "laceration" in note.lower(): diag = "Laceration"
+        elif "angioplasty" in note.lower(): diag = "Coronary Artery Disease"
         
     return {
         "patient": {"age": age, "gender": gender, "history": []},
         "clinical": {
             "diagnosis": diag,
-            "symptoms": ["Extracted via fallback"],
-            "procedures": [],
+            "symptoms": ["NA"],
+            "procedures": ["Angioplasty"] if "angioplasty" in note.lower() else [],
             "suggested_icd": [],
             "suggested_cpt": []
         },
@@ -182,12 +222,16 @@ def map_to_codes(extraction: ExtractionResult):
     
     # 1. Start with AI Suggestions (The "Scalable" part)
     if extraction.clinical.suggested_icd:
-        assigned_icd.extend([flatten(i) for i in extraction.clinical.suggested_icd])
-        audit.append(f"AI suggested ICD-10: {', '.join(assigned_icd)}")
+        ai_icds = [flatten(i) for i in extraction.clinical.suggested_icd if i]
+        if ai_icds:
+            assigned_icd.extend(ai_icds)
+            audit.append(f"AI suggested ICD-10: {', '.join(ai_icds)}")
         
     if extraction.clinical.suggested_cpt:
-        assigned_cpt.extend([flatten(c) for c in extraction.clinical.suggested_cpt])
-        audit.append(f"AI suggested CPT: {', '.join(assigned_cpt)}")
+        ai_cpts = [flatten(c) for c in extraction.clinical.suggested_cpt if c]
+        if ai_cpts:
+            assigned_cpt.extend(ai_cpts)
+            audit.append(f"AI suggested CPT: {', '.join(ai_cpts)}")
 
     # 2. Apply Deterministic "Golden Rules" (Overrides AI if matched)
     diag = flatten(extraction.clinical.diagnosis).lower()
@@ -206,6 +250,10 @@ def map_to_codes(extraction: ExtractionResult):
         elif "E11.9" not in assigned_icd:
             assigned_icd.append("E11.9")
             audit.append("Rule Match: Added E11.9 (Diabetes).")
+            
+    # Always ensure at least one audit entry
+    if not audit:
+        audit.append("No specific rules or AI suggestions matched. Defaulting to standard audit.")
             
     return assigned_icd, assigned_cpt, audit, risk_level
 
@@ -242,7 +290,9 @@ async def analyze_note(input: NoteInput):
     
     TASK:
     1. Extract the clinical data.
-    2. Map the diagnosis to the most specific ICD-10-CM code(s).
+    2. Identify the patient's age. If a Date of Birth (DOB) is provided, calculate the current age as of today (March 25, 2026).
+    3. If age is given in months or days, capture it exactly.
+    4. Map the diagnosis to the most specific ICD-10-CM code(s).
     3. Map the procedures to the most appropriate CPT code(s).
     4. Perform a "Clinical Alignment Audit". 
        - Is the procedure (e.g. Angioplasty) medically indicated for the diagnosis (e.g. Headache)?
@@ -310,9 +360,29 @@ async def analyze_note(input: NoteInput):
         if not data:
             data = fallback_extraction(cleaned_note, "No data extracted")
             
-        if "patient" not in data: data["patient"] = {"age": 0, "gender": "unknown", "history": []}
-        if "clinical" not in data: data["clinical"] = {"diagnosis": "Unknown", "symptoms": [], "procedures": []}
-        if "sanity_check" not in data: data["sanity_check"] = {"is_possible": True, "reasoning": "N/A", "reason": "N/A"}
+        # Ensure sub-dictionaries exist
+        if "patient" not in data: data["patient"] = {}
+        if "clinical" not in data: data["clinical"] = {}
+        if "sanity_check" not in data: data["sanity_check"] = {}
+        
+        # Fill in missing fields within sub-dictionaries
+        p = data["patient"]
+        if "age" not in p: p["age"] = 0
+        if "gender" not in p: p["gender"] = "unknown"
+        if "history" not in p: p["history"] = []
+        
+        c = data["clinical"]
+        if "diagnosis" not in c: c["diagnosis"] = "Unknown"
+        if "symptoms" not in c: c["symptoms"] = ["NA"]
+        if "procedures" not in c: c["procedures"] = []
+        if "suggested_icd" not in c: c["suggested_icd"] = []
+        if "suggested_cpt" not in c: c["suggested_cpt"] = []
+        
+        s = data["sanity_check"]
+        if "is_possible" not in s: s["is_possible"] = True
+        if "reasoning" not in s: s["reasoning"] = "N/A"
+        if "reason" not in s: s["reason"] = "N/A"
+        
         if "confidence" not in data: data["confidence"] = 0.5
 
         extraction = ExtractionResult(**data)
