@@ -24,7 +24,9 @@ export const ICD10_DATABASE: Record<string, ICD10Code> = {
   "J45.909": { code: "J45.909", description: "Unspecified asthma, uncomplicated", category: "Respiratory" },
   "M54.50": { code: "M54.50", description: "Low back pain, unspecified", category: "Musculoskeletal" },
   "L03.115": { code: "L03.115", description: "Cellulitis of right lower limb", category: "Skin" },
-  "I25.10": { code: "I25.10", description: "ASHD of native coronary artery without angina pectoris", category: "Circulatory" }
+  "I25.10": { code: "I25.10", description: "ASHD of native coronary artery without angina pectoris", category: "Circulatory" },
+  "E27.1": { code: "E27.1", description: "Primary adrenocortical insufficiency (Addison's disease)", category: "Endocrine" },
+  "R69": { code: "R69", description: "Illness, unspecified", category: "General" }
 };
 
 export const CPT_DATABASE: Record<string, CPTCode> = {
@@ -40,8 +42,8 @@ export const COMPATIBILITY_RULES: Record<string, string[]> = {
   "11042": ["E11.621", "L03.115", "E11.9"], // Debridement valid for diabetic ulcers/cellulitis
   "93000": ["I10", "I25.10"], // ECG valid for hypertension/heart disease
   "27096": ["M54.50"], // SI joint injection for back pain
-  "99213": ["E11.9", "I10", "J45.909", "M54.50"],
-  "99214": ["E11.621", "I25.10", "L03.115"]
+  "99213": ["E11.9", "I10", "J45.909", "M54.50", "E27.1", "R69"],
+  "99214": ["E11.621", "I25.10", "L03.115", "E27.1", "R69"]
 };
 
 export const PAYER_POLICIES = [

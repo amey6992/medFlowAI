@@ -42,6 +42,10 @@ const EXAMPLE_NOTES = [
     text: "22-year-old athlete with sudden onset right ankle pain after inversion injury during basketball. Significant swelling and ecchymosis. X-ray negative for fracture. Diagnosed with Grade II sprain."
   },
   {
+    title: "Addison's Disease",
+    text: "A 47-year-old man presents with recurrent abdominal pain, chronic diarrhea, and significant weight loss over nine months. He also reports hyperpigmentation of his skin and persistent fatigue despite adequate nutrition."
+  },
+  {
     title: "Ambiguous Note",
     text: "Patient came in today. Feeling unwell. Did some tests. Might be something with the heart or maybe just a cold. Not sure."
   }
@@ -51,7 +55,7 @@ export default function App() {
   const [note, setNote] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [result, setResult] = useState<{ extraction: ExtractionResult, decision: ClaimDecision, steps: ProcessingStep[] } | null>(null);
-  const [activeTab, setActiveTab] = useState<'decision' | 'audit' | 'architecture'>('decision');
+  const [activeTab, setActiveTab] = useState<'decision' | 'audit'>('decision');
 
   const [currentStepIndex, setCurrentStepIndex] = useState(-1);
   const [hasError, setHasError] = useState(false);

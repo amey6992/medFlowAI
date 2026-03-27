@@ -165,6 +165,11 @@ function detectRisks(extraction: ExtractionResult) {
     level = 'High';
   }
 
+  if (diag.includes('addison') || diag.includes('adrenal') || symptoms.some(s => s.includes('hyperpigmentation'))) {
+    risks.push("High: Complex endocrine condition (Addison's/Adrenal Insufficiency)");
+    level = 'High';
+  }
+
   return { level, triggers: risks };
 }
 
@@ -198,6 +203,9 @@ function mapToCodes(extraction: ExtractionResult) {
   } else if (diag.includes('sprain') || diag.includes('ankle')) {
     assignedIcd.push("S93.401A");
     audit.push("Mapped 'Ankle Sprain' to S93.401A.");
+  } else if (diag.includes('addison') || diag.includes('adrenal') || symptoms.some(s => s.includes('hyperpigmentation'))) {
+    assignedIcd.push("E27.1");
+    audit.push("Mapped 'Addison's Disease' or 'Adrenal Insufficiency' to E27.1.");
   } else {
     assignedIcd.push("R69"); // Illness, unspecified
     audit.push("Defaulted to R69 (Unspecified illness) due to ambiguous diagnosis.");
@@ -266,7 +274,9 @@ function makeDecision(extraction: ExtractionResult, risk: any, codes: any, valid
     reason = validation.errors.join(" ");
   } else if (risk.level === 'High' || validation.warnings.length > 0) {
     status = 'ESCALATE';
-    reason = risk.level === 'High' ? "High clinical risk detected." : "Administrative warnings present.";
+    reason = risk.level === 'High' 
+      ? `High clinical risk detected: ${risk.triggers.join(", ")}` 
+      : "Administrative warnings present.";
   }
 
   return {
