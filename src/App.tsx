@@ -15,7 +15,6 @@ import {
   User,
   Layers,
   Database,
-  Cpu,
   Workflow
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -225,7 +224,7 @@ export default function App() {
 
               {/* Tabs */}
               <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit">
-                {(['decision', 'audit', 'architecture'] as const).map((tab) => (
+                {(['decision', 'audit'] as const).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => setActiveTab(tab)}
@@ -386,103 +385,6 @@ export default function App() {
                             </div>
                           </div>
                         ))}
-                      </div>
-                    </motion.div>
-                  )}
-
-                  {activeTab === 'architecture' && (
-                    <motion.div
-                      key="architecture"
-                      initial={{ opacity: 0, x: -10 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 10 }}
-                      className="bg-white rounded-2xl border border-slate-200 p-8"
-                    >
-                      <div className="max-w-2xl mx-auto space-y-12">
-                        <div className="text-center space-y-2">
-                          <h3 className="text-xl font-bold">MedFlow AI Architecture</h3>
-                          <p className="text-sm text-slate-500">Hybrid AI + Deterministic Rule Engine Pipeline</p>
-                        </div>
-
-                        <div className="relative space-y-8">
-                          {/* Flow Diagram */}
-                          <div className="flex flex-col items-center gap-8">
-                            {/* Input */}
-                            <div className="w-full max-w-xs p-4 bg-slate-50 border border-slate-200 rounded-xl text-center">
-                              <FileText className="w-6 h-6 mx-auto mb-2 text-slate-400" />
-                              <p className="text-xs font-bold uppercase tracking-widest text-slate-500">Clinical Note</p>
-                            </div>
-                            
-                            <ArrowRight className="w-6 h-6 text-slate-300 rotate-90" />
-
-                            {/* LLM Layer */}
-                            <div className="w-full p-6 bg-blue-50 border border-blue-200 rounded-2xl relative">
-                              <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-blue-600 text-white text-[10px] font-bold rounded-full">AI LAYER (GEMINI)</div>
-                              <div className="flex items-center justify-around">
-                                <div className="text-center">
-                                  <Search className="w-5 h-5 mx-auto mb-2 text-blue-600" />
-                                  <p className="text-xs font-bold">Extraction</p>
-                                </div>
-                                <div className="text-center">
-                                  <AlertTriangle className="w-5 h-5 mx-auto mb-2 text-blue-600" />
-                                  <p className="text-xs font-bold">Risk Detection</p>
-                                </div>
-                                <div className="text-center">
-                                  <Info className="w-5 h-5 mx-auto mb-2 text-blue-600" />
-                                  <p className="text-xs font-bold">Confidence Score</p>
-                                </div>
-                              </div>
-                            </div>
-
-                            <ArrowRight className="w-6 h-6 text-slate-300 rotate-90" />
-
-                            {/* Deterministic Layer */}
-                            <div className="w-full p-6 bg-indigo-50 border border-indigo-200 rounded-2xl relative">
-                              <div className="absolute -top-3 left-1/2 -translate-x-1/2 px-3 py-1 bg-indigo-600 text-white text-[10px] font-bold rounded-full">DETERMINISTIC LAYER</div>
-                              <div className="flex items-center justify-around">
-                                <div className="text-center">
-                                  <Database className="w-5 h-5 mx-auto mb-2 text-indigo-600" />
-                                  <p className="text-xs font-bold">Code Lookup</p>
-                                </div>
-                                <div className="text-center">
-                                  <Layers className="w-5 h-5 mx-auto mb-2 text-indigo-600" />
-                                  <p className="text-xs font-bold">Rule Engine</p>
-                                </div>
-                                <div className="text-center">
-                                  <ShieldCheck className="w-5 h-5 mx-auto mb-2 text-indigo-600" />
-                                  <p className="text-xs font-bold">Payer Policies</p>
-                                </div>
-                              </div>
-                            </div>
-
-                            <ArrowRight className="w-6 h-6 text-slate-300 rotate-90" />
-
-                            {/* Decision */}
-                            <div className="w-full max-w-xs p-4 bg-slate-900 text-white rounded-xl text-center shadow-xl">
-                              <Cpu className="w-6 h-6 mx-auto mb-2 text-blue-400" />
-                              <p className="text-xs font-bold uppercase tracking-widest text-slate-400">Decision Engine</p>
-                              <p className="text-sm font-bold mt-1">Approve / Reject / Escalate</p>
-                            </div>
-                          </div>
-                        </div>
-
-                        <div className="bg-slate-50 p-6 rounded-2xl space-y-4">
-                          <h4 className="font-bold text-sm">Addressing Technical Gaps:</h4>
-                          <ul className="space-y-3">
-                            <li className="flex gap-3 text-xs">
-                              <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 text-blue-600 font-bold">1</div>
-                              <p><span className="font-bold">No Hallucination:</span> Coding is restricted to a verified JSON database. LLM only extracts concepts; the system maps them to valid codes via deterministic lookup.</p>
-                            </li>
-                            <li className="flex gap-3 text-xs">
-                              <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 text-blue-600 font-bold">2</div>
-                              <p><span className="font-bold">Rule Engine:</span> Implemented a hard-coded compatibility matrix (ICD-CPT) and specific payer policy checks (e.g., Medicare LCD).</p>
-                            </li>
-                            <li className="flex gap-3 text-xs">
-                              <div className="w-5 h-5 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0 text-blue-600 font-bold">3</div>
-                              <p><span className="font-bold">Reliability:</span> Every extraction includes a confidence score. Scores below 0.7 trigger automatic escalation to human review.</p>
-                            </li>
-                          </ul>
-                        </div>
                       </div>
                     </motion.div>
                   )}

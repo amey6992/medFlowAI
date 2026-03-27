@@ -35,5 +35,9 @@ ollama pull llama3.1
    npm run dev
    ```
 
-## 5. How it works
+## 5. GitHub Repository
+For the complete source code, deployment scripts, and advanced configuration, please visit the official GitHub repository:
+[https://github.com/your-username/medflow-ai](https://github.com/your-username/medflow-ai)
+
+## 6. How it works
 The frontend will now send clinical notes to your local Python server (`localhost:8000`), which uses Ollama to process the text using the `llama3.1` model. The deterministic rule engine still runs to ensure coding accuracy.
