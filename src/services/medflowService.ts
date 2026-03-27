@@ -175,31 +175,50 @@ function mapToCodes(extraction: ExtractionResult) {
 
   const diag = extraction.clinical.diagnosis.toLowerCase();
   const procs = extraction.clinical.procedures.map(p => p.toLowerCase());
+  const symptoms = extraction.clinical.symptoms.map(s => s.toLowerCase());
 
-  // Strict ICD-10 Mapping (Simulating RAG/Lookup)
+  // ICD-10 Mapping
   if (diag.includes('diabetes')) {
-    if (diag.includes('ulcer') || extraction.clinical.symptoms.some(s => s.toLowerCase().includes('ulcer'))) {
+    if (diag.includes('ulcer') || symptoms.some(s => s.includes('ulcer'))) {
       assignedIcd.push("E11.621");
-      audit.push("Mapped 'Diabetes + Ulcer' to E11.621 via strict clinical mapping.");
+      audit.push("Mapped 'Diabetes + Ulcer' to E11.621.");
     } else {
       assignedIcd.push("E11.9");
-      audit.push("Mapped 'Diabetes' to E11.9 (uncomplicated).");
+      audit.push("Mapped 'Diabetes' to E11.9.");
     }
   } else if (diag.includes('hypertension')) {
     assignedIcd.push("I10");
     audit.push("Mapped 'Hypertension' to I10.");
+  } else if (diag.includes('asthma')) {
+    assignedIcd.push("J45.909");
+    audit.push("Mapped 'Asthma' to J45.909.");
+  } else if (diag.includes('knee replacement') || diag.includes('post-op')) {
+    assignedIcd.push("Z47.1");
+    audit.push("Mapped 'Post-op Joint Aftercare' to Z47.1.");
+  } else if (diag.includes('sprain') || diag.includes('ankle')) {
+    assignedIcd.push("S93.401A");
+    audit.push("Mapped 'Ankle Sprain' to S93.401A.");
+  } else {
+    assignedIcd.push("R69"); // Illness, unspecified
+    audit.push("Defaulted to R69 (Unspecified illness) due to ambiguous diagnosis.");
   }
 
-  // Strict CPT Mapping
+  // CPT Mapping
   if (procs.some(p => p.includes('debridement'))) {
     assignedCpt.push("11042");
     audit.push("Mapped 'Debridement' to CPT 11042.");
   } else if (procs.some(p => p.includes('ecg') || p.includes('electrocardiogram'))) {
     assignedCpt.push("93000");
     audit.push("Mapped 'ECG' to CPT 93000.");
+  } else if (procs.some(p => p.includes('nebulizer') || p.includes('inhalation'))) {
+    assignedCpt.push("94640");
+    audit.push("Mapped 'Nebulizer Treatment' to CPT 94640.");
+  } else if (procs.some(p => p.includes('physical therapy') || p.includes('exercise'))) {
+    assignedCpt.push("97110");
+    audit.push("Mapped 'Therapeutic Exercise' to CPT 97110.");
   } else {
     assignedCpt.push("99213"); // Default E/M
-    audit.push("Defaulted to E/M code 99213 for office visit.");
+    audit.push("Assigned standard Office Visit code 99213.");
   }
 
   return { assignedIcd, assignedCpt, audit };

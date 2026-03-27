@@ -23,7 +23,7 @@ import { processClinicalNote, ExtractionResult, ClaimDecision, ProcessingStep } 
 
 const EXAMPLE_NOTES = [
   {
-    title: "Diabetic Foot Debridement",
+    title: "Diabetic Foot Ulcer",
     text: "60-year-old male patient with type 2 diabetes. Presents with a non-healing foot ulcer on the right heel. Signs of subcutaneous infection noted. Performed surgical debridement of subcutaneous tissue (approx 15 sq cm)."
   },
   {
@@ -31,7 +31,19 @@ const EXAMPLE_NOTES = [
     text: "45-year-old female with essential hypertension. Complaining of mild dizziness. Blood pressure 145/95. Routine 12-lead ECG performed in office."
   },
   {
-    title: "Ambiguous Note (Low Confidence)",
+    title: "Pediatric Asthma",
+    text: "8-year-old male with persistent cough and wheezing for 3 days. History of asthma. Peak flow 150. Prescribed albuterol nebulizer treatment."
+  },
+  {
+    title: "Post-Op Knee Recovery",
+    text: "55-year-old female, 2 weeks post-total knee replacement. Wound healing well, no signs of infection. Range of motion improving. Physical therapy continued."
+  },
+  {
+    title: "Acute Ankle Sprain",
+    text: "22-year-old athlete with sudden onset right ankle pain after inversion injury during basketball. Significant swelling and ecchymosis. X-ray negative for fracture. Diagnosed with Grade II sprain."
+  },
+  {
+    title: "Ambiguous Note",
     text: "Patient came in today. Feeling unwell. Did some tests. Might be something with the heart or maybe just a cold. Not sure."
   }
 ];
@@ -42,17 +54,49 @@ export default function App() {
   const [result, setResult] = useState<{ extraction: ExtractionResult, decision: ClaimDecision, steps: ProcessingStep[] } | null>(null);
   const [activeTab, setActiveTab] = useState<'decision' | 'audit' | 'architecture'>('decision');
 
+  const [currentStepIndex, setCurrentStepIndex] = useState(-1);
+  const [hasError, setHasError] = useState(false);
+  const steps = [
+    "Clinical NLP",
+    "Risk Detection",
+    "Code Mapping",
+    "Validation",
+    "Decision"
+  ];
+
   const handleAnalyze = async () => {
     if (!note.trim()) return;
     setIsProcessing(true);
     setResult(null);
+    setHasError(false);
+    setCurrentStepIndex(0);
+
+    // Simulate step progress for UI
+    const stepInterval = setInterval(() => {
+      setCurrentStepIndex(prev => {
+        if (prev < steps.length - 1) return prev + 1;
+        clearInterval(stepInterval);
+        return prev;
+      });
+    }, 600);
+
     try {
       const data = await processClinicalNote(note);
-      setResult(data);
+      // Ensure we stay on the last step for a moment before showing results
+      setTimeout(() => {
+        setResult(data);
+        setIsProcessing(false);
+        // Keep currentStepIndex at the last step to show completed state
+        if (data.decision.status === 'REJECT') {
+          setHasError(true);
+        }
+        clearInterval(stepInterval);
+      }, 800);
     } catch (error) {
       console.error(error);
-    } finally {
       setIsProcessing(false);
+      setHasError(true);
+      clearInterval(stepInterval);
     }
   };
 
@@ -65,7 +109,7 @@ export default function App() {
             <Activity className="text-white w-6 h-6" />
           </div>
           <div>
-            <h1 className="text-xl font-bold tracking-tight">MedFlow AI</h1>
+            <h1 className="text-xl font-bold tracking-tight text-slate-900">MedFlow AI</h1>
             <p className="text-xs text-slate-500 font-medium uppercase tracking-wider">Autonomous Healthcare Claims Agent</p>
           </div>
         </div>
@@ -128,20 +172,7 @@ export default function App() {
             </div>
           </section>
 
-          {/* Processing Steps Visualizer */}
-          {isProcessing && (
-            <section className="bg-white rounded-2xl border border-slate-200 p-4 space-y-4">
-              <h3 className="text-xs font-bold text-slate-400 uppercase">Agent Workflow Execution</h3>
-              <div className="space-y-3">
-                {['Clinical Extraction', 'Risk Detection', 'Medical Coding', 'Rule Validation', 'Decision Engine'].map((step, i) => (
-                  <div key={i} className="flex items-center gap-3">
-                    <div className="w-2 h-2 rounded-full bg-blue-600 animate-pulse" />
-                    <span className="text-sm font-medium text-slate-600">{step}</span>
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
+          {/* Processing Steps Visualizer (Removed from sidebar, now at bottom) */}
         </div>
 
         {/* Right Column: Results */}
@@ -459,6 +490,46 @@ export default function App() {
               </div>
             </motion.div>
           )}
+        </div>
+
+        {/* Progress Bar Section (Below Input and Results) */}
+        <div className="lg:col-span-12 mt-6">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden flex flex-col md:flex-row divide-y md:divide-y-0 md:divide-x divide-slate-100">
+            {steps.map((step, i) => {
+              const isCompleted = (result && !isProcessing) || i < currentStepIndex;
+              const isProcessingStep = isProcessing && i === currentStepIndex;
+              const isLastStep = i === steps.length - 1;
+              const isFailed = hasError && (isLastStep || i === currentStepIndex);
+              
+              let bgColor = "bg-white";
+              let textColor = "text-slate-400";
+              let iconColor = "bg-slate-100 text-slate-400";
+              
+              if (isCompleted && !isFailed) {
+                bgColor = "bg-emerald-50/50";
+                textColor = "text-emerald-600";
+                iconColor = "bg-emerald-500 text-white";
+              } else if (isProcessingStep) {
+                bgColor = "bg-blue-50/50";
+                textColor = "text-blue-600";
+                iconColor = "bg-blue-600 text-white animate-pulse";
+              } else if (isFailed) {
+                bgColor = "bg-rose-50/50";
+                textColor = "text-rose-600";
+                iconColor = "bg-rose-500 text-white";
+              }
+
+              return (
+                <div key={i} className={`flex-1 flex flex-col items-center justify-center py-6 px-4 transition-colors duration-300 ${bgColor}`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center mb-3 text-sm font-bold ${iconColor}`}>
+                    {isCompleted && !isFailed ? <CheckCircle2 className="w-6 h-6" /> : 
+                     isFailed ? <XCircle className="w-6 h-6" /> : (i + 1)}
+                  </div>
+                  <span className={`text-xs font-bold uppercase tracking-widest text-center ${textColor}`}>{step}</span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </main>
 
